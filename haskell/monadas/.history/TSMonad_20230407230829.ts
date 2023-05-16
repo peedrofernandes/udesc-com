@@ -1,0 +1,4 @@
+interface OperationWithLog {
+  result: number;
+  
+}
