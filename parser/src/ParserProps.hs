@@ -32,6 +32,11 @@ data ExprL = ExprL :&: ExprL
 data Var = Id :#: Tipo deriving Show
 data Funcao = Id :->: ([Var], Tipo) deriving Show
 data Programa = Prog [Funcao] [(Id, [Var], Bloco)] [Var] Bloco deriving Show
+-- [Funcao] = Lista de funções
+-- [(Id, [Var], Bloco)] = ?
+-- [Var] = Lista de variáveis globais
+-- Bloco = Bloco principal
+
 type Bloco = [Comando]
 data Comando = If ExprL Bloco Bloco
              | While ExprL Bloco
@@ -77,3 +82,16 @@ commaToken = T.comma lexer
 
 
 type Parser u r = Parsec String u r
+
+-- getVars :: (Tipo, [Id]) -> [Var]
+-- getVars [] = []
+-- getVars ((tipo, []) : t) = getVars(t)
+-- getVars ((tipo, id : ids) : t) = (id :#: tipo) : getVars ((tipo, ids) : t)
+
+getVars :: (Tipo, [Id]) -> [Var]
+getVars (tipo, []) = []
+getVars (tipo, id : ids) = (id :#: tipo) : getVars (tipo, ids)
+
+extractProgramTriple :: [(Funcao, [Var], Bloco)] -> [(Id, [Var], Bloco)]
+extractProgramTriple [] = []
+extractProgramTriple ((id :->: t, v, b) : ts) = (id, v, b) : extractProgramTriple(ts)

@@ -1,0 +1,40 @@
+int fatorial(int x)
+{
+    double y;
+    var = value;
+    print(a);
+    return;
+}
+void recursaoAEsquerda(int a, double b)
+{
+    while(a == 3) {
+        if (b <= 7) {
+            return a;
+        } else {
+            read(y);
+        }
+    }
+}
+{
+    int teste, doido;
+    double teste2;
+    while(x == 2)
+    {
+        return 3;
+        read(vv);
+
+    }
+    if(a == b)
+    {
+        print("Pedrão!");
+    } 
+    else
+    {
+        print("else");
+    }
+    if(macaco == gmr)
+    {
+        return 0;
+    }
+    return null;
+}
