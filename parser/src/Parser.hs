@@ -27,7 +27,7 @@ Objetivo: Criar um Analisador Sintático Preditivo, com a seguinte gramática:
 <ChamadaFuncao>     -> id (<ListaParametros>)
 <ListaParametros>   -> <ListaParametros'>
                      | vazio
-<ListaParametros'>  -> <Expressao><ListaParametros''>
+<ListaParametros'>  -> <Expressao> <ListaParametros''>
 <ListaParametros''> -> , <ListaParametros'>
                      | vazio
 <Comando>           -> return <TvzExpressao>;
@@ -42,39 +42,37 @@ Objetivo: Criar um Analisador Sintático Preditivo, com a seguinte gramática:
 <Senao>             -> else <Bloco>
                      | vazio
 
-
-
 Regras de derivação personalizadas
 
-<Expressao> -> <Expressao> + <Expressao>        (Expr :+: Expr)
-             | <Expressao> - <Expressao>        (Expr :-: Expr)
-             | <Expressao> * <Expressao>        (Expr :*: Expr)
-             | <Expressao> / <Expressao>        (Expr :/: Expr)
-             | - <Expressao>                    (Neg Expr)
-             | const                            (Const TCons)
-             | id                               (IdVar Id)
-             | id <ListaParametros>             (Chamada Id [Expr])
-             | literal                          (Lit String)
+<Expressao> -> <Expressao> + <Expressao>                        (Expr :+: Expr)
+             | <Expressao> - <Expressao>                        (Expr :-: Expr)
+             | <Expressao> * <Expressao>                        (Expr :*: Expr)
+             | <Expressao> / <Expressao>                        (Expr :/: Expr)
+             | - <Expressao>                                    (Neg Expr)
+             | const                                            (Const TCons)
+             | id                                               (IdVar Id)
+             | <ChamadaFuncao>                                  (Chamada Id [Expr])
+             | literal                                          (Lit String)
 
-<ExpressaoRelacional> -> <Expressao> == <Expressao>
-                       | <Expressao> /= <Expressao>
-                       | <Expressao> < <Expressao>
-                       | <Expressao> > <Expressao>
-                       | <Expressao> <= <Expressao>
-                       | <Expressao> >= <Expressao>
+<ExpressaoRelacional> -> <Expressao> == <Expressao>             (Expr :==: Expr)
+                       | <Expressao> /= <Expressao>             (Expr :/=: Expr)
+                       | <Expressao> < <Expressao>              (Expr :<: Expr)
+                       | <Expressao> > <Expressao>              (Expr :>: Expr)
+                       | <Expressao> <= <Expressao>             (Expr :<=: Expr)
+                       | <Expressao> >= <Expressao>             (Expr :>=: Expr)
 
-<ExpressaoLogica> -> <ExpressaoLogica> & <ExpressaoLogica>
-                   | <ExpressaoLogica> | <ExpressaoLogica>
-                   | ! <ExpressaoLogica>
-                   | <ExpressaoRelacional>
+<ExpressaoLogica> -> <ExpressaoLogica> & <ExpressaoLogica>      (ExprL :&: ExprL)
+                   | <ExpressaoLogica> | <ExpressaoLogica>      (ExprL :|: ExprL)
+                   | ! <ExpressaoLogica>                        (Not ExprL)
+                   | <ExpressaoRelacional>                      (Rel ExprR)
 
 Sem recursão à esquerda:
 
-<Expressao> -> - <Expressao> <Expressao'>        (Neg Expr)
-            | const <Expressao'>                 (Const TCons)
-            | id <Expressao'>                    (idVar Id)
-            | id <ListaParametros> <Expressao'>  (Chamada Id [Expr])
-            | literal                            (Lit String) (?)
+<Expressao> -> - <Expressao> <Expressao'>
+            | const <Expressao'>
+            | id <Expressao'>
+            | <ChamadaFuncao> <Expressao'>
+            | literal <Expressao'>
 
 <Expressao'> -> + <Expressao> <Expressao'>
               | - <Expressao> <Expressao'>
@@ -93,38 +91,13 @@ Sem recursão à esquerda:
 <ExpressaoLogica> -> ! <ExpressaoLogica> <ExpressaoLogica'>
                    | <ExpressaoRelacional> <ExpressaoLogica'>
 
-<ExpressaoLogica'> -> & <ExpressaoLogica'>
-                    | | <ExpressaoLogica'>
+<ExpressaoLogica'> -> & <ExpressaoLogica> <ExpressaoLogica'>
+                    | | <ExpressaoLogica> <ExpressaoLogica'>
                     | vazio
-
-Fatoradas:                      (Lit String) (?)
-
-<Expressao> -> id <Expressao''>
-            | - <Expressao> <Expressao'>
-            | const <Expressao'>
-            | literal
-
-<Expressao'> -> + <Expressao> <Expressao'>
-              | - <Expressao> <Expressao'>
-              | * <Expressao> <Expressao'>
-              | / <Expressao> <Expressao'>
-              | vazio
-
-<Expressao''> -> <Expressao'>
-              | <ListaParametros> <Expressao'>
-
-<ExpressaoRelacional> -> <Expressao> <ExpressaoRelacional'>
-
-<ExpressaoRelacional'> -> == <Expressao>
-                        | != <Expressao>
-                        | < <Expressao>
-                        | > <Expressao>
-                        | <= <Expressao>
-                        | >= <Expressao>
-
-
-
+                    
 -}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use <$>" #-}
 module Parser where
 
 import Text.Parsec
@@ -259,18 +232,21 @@ parserChamadaFuncao = do { id <- identifierToken
 -- <ListaParametros>   -> <ListaParametros'>
 --                     | vazio
 parserListaParametros :: Parser u [Expr]
-parserListaParametros = do {l' <- parserListaParametros'; return l'}
-                        <|> do {return []}
+parserListaParametros = do { parserListaParametros' }
+                        <|> do { return [] }
 
 -- <ListaParametros'>  -> <Expressao> <ListaParametros''>
 parserListaParametros' :: Parser u [Expr]
-parserListaParametros' = do {expr <- parserExpressao; l'' <- parserListaParametros''; return $ expr : l''}
+parserListaParametros' = do { expr <- parserExpressao
+                            ; l'' <- parserListaParametros''
+                            ; return $ expr : l'' }
 
 -- <ListaParametros''> -> , <ListaParametros'>
 --                     | vazio
 parserListaParametros'' :: Parser u [Expr]
-parserListaParametros'' = do {commaToken; l' <- parserListaParametros'; return l'}
-                          <|> do {return []}
+parserListaParametros'' = do { commaToken
+                             ; parserListaParametros' }
+                          <|> do { return [] }
 
 -- <Comando>           -> return <TvzExpressao>;
 --                     | if (<ExpressaoLogica>) <Bloco> <Senao>
@@ -291,11 +267,11 @@ parserComando = do { reservedToken "return"
             <|> do { reservedToken "while"
                    ; exprL <- parensToken parserExpressaoLogica
                    ; While exprL <$> parserBloco }
-            <|> do { id <- identifierToken
+            <|> try (do { id <- identifierToken
                    ; reservedToken "="
                    ; expr <- parserExpressao
                    ; semiToken
-                   ; return $ Atrib id expr }
+                   ; return $ Atrib id expr })
             <|> do { reservedToken "print"
                    ; expr <- parensToken parserExpressao
                    ; semiToken
@@ -320,23 +296,49 @@ parserSenao :: Parser u Bloco
 parserSenao = do {reservedToken "else"; parserBloco}
               <|> return []
 
+-- A SER EXCLUÍDO
 -- <Expressao> -> id <Expressao''>
 --             | - <Expressao> <Expressao'>
 --             | const <Expressao'>
 --             | literal
+-- parserExpressao :: Parser u Expr
+-- parserExpressao = do { id <- identifierToken
+--                      ; parserExpressao'' 
+--                      ; return $ IdVar id }
+--               <|> do { reservedToken "-"
+--                      ; e <- parserExpressao
+--                      ; parserExpressao'
+--                      ; return $ Neg e } 
+--               <|> do { c <- naturalOrFloatToken
+--                      ; parserExpressao'
+--                      ; case c of 
+--                         Left n -> return $ Const (CInt n)
+--                         Right d -> return $ Const (CDouble d) }
+--               <|> do { s <- stringLiteralToken
+--                      ; return $ Lit s }
+
+-- <Expressao> -> - <Expressao> <Expressao'>
+--             | const <Expressao'>
+--             | id <Expressao'>
+--             | <ChamadaFuncao> <Expressao'>
+--             | literal <Expressao'>
 parserExpressao :: Parser u Expr
-parserExpressao = do { id <- identifierToken
-                     ; parserExpressao'' 
+parserExpressao = try (do { (Proc id l) <- parserChamadaFuncao
+                     ; parserExpressao' (Chamada id l)
+                     ; return $ Chamada id l })
+              <|> do { id <- identifierToken
+                     ; parserExpressao' $ IdVar id
                      ; return $ IdVar id }
               <|> do { reservedToken "-"
-                     ; e <- parserExpressao
-                     ; parserExpressao'
-                     ; return $ Neg e } 
-              <|> do { c <- naturalOrFloatToken
-                     ; parserExpressao'
-                     ; case c of 
-                        Left n -> return $ Const (CInt n)
-                        Right d -> return $ Const (CDouble d) }
+                     ; expr <- parserExpressao
+                     ; parserExpressao' expr
+                     ; return expr }
+              <|> do { const <- naturalOrFloatToken
+                     ; let c = case const of
+                            Left n -> Const $ CInt n
+                            Right d -> Const $ CDouble d
+                     ; parserExpressao' c
+                     ; return c }
               <|> do { s <- stringLiteralToken
                      ; return $ Lit s }
 
@@ -345,31 +347,32 @@ parserExpressao = do { id <- identifierToken
 --               | * <Expressao> <Expressao'>
 --               | / <Expressao> <Expressao'>
 --               | vazio
-parserExpressao' :: Parser u (Maybe Expr)
-parserExpressao' = do { reservedOpToken "+"
-                      ; e <- parserExpressao
-                      ; parserExpressao'
-                      ; return $ Just e }
+parserExpressao' :: Expr -> Parser u (Maybe Expr)
+parserExpressao' expr1 = do { reservedOpToken "+"
+                      ; expr2 <- parserExpressao
+                      ; parserExpressao' expr2
+                      ; return $ Just (expr1 :+: expr2) }
                <|> do { reservedOpToken "-"
-                      ; e <- parserExpressao
-                      ; parserExpressao'
-                      ; return $ Just e }
+                      ; expr2 <- parserExpressao
+                      ; parserExpressao' expr2
+                      ; return $ Just (expr1 :-: expr2) }
                <|> do { reservedOpToken "*"
-                      ; e <- parserExpressao
-                      ; parserExpressao'
-                      ; return $ Just e }
+                      ; expr2 <- parserExpressao
+                      ; parserExpressao' expr2
+                      ; return $ Just (expr1 :*: expr2) }
                <|> do { reservedOpToken "/"
-                      ; e <- parserExpressao
-                      ; parserExpressao'
-                      ; return $ Just e }
+                      ; expr2 <- parserExpressao
+                      ; parserExpressao' expr2
+                      ; return $ Just (expr1 :/: expr2) }
                <|> return Nothing 
 
--- <Expressao''> -> <Expressao'>
-              -- | <ListaParametros> <Expressao'>
-parserExpressao'' :: Parser u (Maybe Expr)
-parserExpressao'' = do { parserExpressao' }
-                <|> do { parserListaParametros
-                       ; parserExpressao' }
+-- A SER EXCLUÍDO
+-- -- <Expressao''> -> <Expressao'>
+--               -- | <ListaParametros> <Expressao'>
+-- parserExpressao'' :: Parser u (Maybe Expr)
+-- parserExpressao'' = do { parserExpressao' }
+--                 <|> do { parserListaParametros
+--                        ; parserExpressao' }
 
 -- <ExpressaoRelacional> -> <Expressao> <ExpressaoRelacional'>
 parserExpressaoRelacional :: Parser u ExprR
@@ -408,19 +411,34 @@ parserExpressaoRelacional' e1 = do { reservedToken "=="
 --                    | <ExpressaoRelacional> <ExpressaoLogica'>
 parserExpressaoLogica :: Parser u ExprL
 parserExpressaoLogica = do { reservedToken "!"
-                           ; e <- parserExpressaoLogica
-                           ; parserExpressaoLogica'
-                           ; return $ Not e }
-                    <|> do { r <- parserExpressaoRelacional
-                           ; parserExpressaoLogica'
-                           ; return $ Rel r }
+                           ; exprL <- parserExpressaoLogica
+                           ; parserExpressaoLogica' exprL
+                           ; return $ Not exprL }
+                    <|> do { exprR <- parserExpressaoRelacional
+                           ; parserExpressaoLogica' (Rel exprR)
+                           ; return $ Rel exprR }
 
 
--- <ExpressaoLogica'> -> & <ExpressaoLogica'>
---                     | | <ExpressaoLogica'>
+-- A SER EXCLUÍDO
+-- -- <ExpressaoLogica'> -> & <ExpressaoLogica'>
+-- --                     | | <ExpressaoLogica'>
+-- --                     | vazio
+-- parserExpressaoLogica' :: Parser u (Maybe ExprL)
+-- parserExpressaoLogica' = do {reservedToken "&"; parserExpressaoLogica'}
+--                      <|> do {reservedToken "|"; parserExpressaoLogica'}
+--                      <|> do return Nothing
+
+-- <ExpressaoLogica'> -> & <ExpressaoLogica> <ExpressaoLogica'>
+--                     | | <ExpressaoLogica> <ExpressaoLogica'>
 --                     | vazio
-parserExpressaoLogica' :: Parser u (Maybe ExprL)
-parserExpressaoLogica' = do {reservedToken "&"; parserExpressaoLogica'}
-                     <|> do {reservedToken "|"; parserExpressaoLogica'}
-                     <|> do return Nothing
+parserExpressaoLogica' :: ExprL -> Parser u (Maybe ExprL)
+parserExpressaoLogica' exprL1 = do { reservedToken "&"
+                                   ; exprL2 <- parserExpressaoLogica
+                                   ; parserExpressaoLogica' exprL2
+                                   ; return $ Just (exprL1 :&: exprL2) }
+                            <|> do { reservedToken "|"
+                                   ; exprL2 <- parserExpressaoLogica
+                                   ; parserExpressaoLogica' exprL2
+                                   ; return $ Just (exprL1 :|: exprL2) }
+                            <|> do return Nothing
 
