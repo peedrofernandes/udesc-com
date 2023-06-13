@@ -1,0 +1,3 @@
+(((Const (CInt 1) :*: Const (CDouble 4.8)) :+: Const (CInt 1)) :-: (Const (CInt 3) :/: Const (CInt 10))) :+: Const (CInt 10)
+
+(((IntDouble (Const (CInt 1)) :*: Const (CDouble 4.8)) :+: IntDouble (Const (CInt 1))) :-: IntDouble (Const (CInt 3) :/: Const (CInt 10))) :+: IntDouble (Const (CInt 10))

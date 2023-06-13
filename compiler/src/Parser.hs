@@ -100,29 +100,41 @@ Sem recursão à esquerda:
 {-# HLINT ignore "Use <$>" #-}
 module Parser where
 
-import Text.Parsec
-import Text.Parsec.Token as T
-import ParserProps
+import Text.Parsec ( (<|>), try )
+import Text.Parsec.Token as T ()
+import CompilerProps
+    ( bracesToken,
+      commaToken,
+      extractProgramTriple,
+      getVars,
+      identifierToken,
+      naturalOrFloatToken,
+      parensToken,
+      reservedOpToken,
+      reservedToken,
+      semiToken,
+      stringLiteralToken,
+      Bloco,
+      Comando(..),
+      Expr((:/:), Chamada, IdVar, Const, Lit, (:+:), (:-:), (:*:)),
+      ExprL(..),
+      ExprR(..),
+      Funcao(..),
+      Id,
+      Parser,
+      Programa(..),
+      TCons(CDouble, CInt),
+      Tipo(..),
+      Var(..), precedenceTable )
 import Data.List (unzip4)
 import qualified GHC.Generics as Expressao
+import Text.Parsec.Expr (buildExpressionParser)
+
+import Handlers
+import Control.Monad.IO.Class (MonadIO(liftIO))
 
 -- <Programa>          -> <ListaFuncoes> <BlocoPrincipal>
 parserPrograma :: Parser u Programa
--- parserPrograma = do {
---   T.whiteSpaces;
---   funcoes <- parserListaFuncoes; 
---   blocoPrincipal <- parserBlocoPrincipal;
---   let procedimentos = extrairProcs blocoPrincipal
---   variaveis = extrairVars blocoPrincipal;
---   return $ Prog funcoes procedimentos variaveis blocoPrincipal;
--- }
--- parserPrograma = do
---   funcoes <- parserListaFuncoes
---   blocoPrincipal <- parserBlocoPrincipal
---   let procedimentos = extrairProcs blocoPrincipal
---       variaveis = extrairVars blocoPrincipal
---   return $ Prog funcoes procedimentos variaveis blocoPrincipal
-
 -- Prog [Funcao] [(Id, [Var], Bloco)] [Var] Bloco
 parserPrograma = do { fBlocks <- parserListaFuncoes
                     ; (var, bloco) <- parserBlocoPrincipal 
@@ -175,14 +187,13 @@ parserParametros = do {
 
 -- <BlocoPrincipal>    -> {<BlocoPrincipal'>}
 parserBlocoPrincipal :: Parser u ([Var], Bloco)
-parserBlocoPrincipal = do { b <- bracesToken parserBlocoPrincipal'
-                          ; return b }
+parserBlocoPrincipal = do { bracesToken parserBlocoPrincipal' }
 
 -- <BlocoPrincipal'>   -> <Declaracoes> <ListaCmd>
 parserBlocoPrincipal' :: Parser u ([Var], Bloco)
 parserBlocoPrincipal' = do { declaracoes <- parserDeclaracoes
                            ; cmds <- parserListaCmd
-                           ; return $ (declaracoes, cmds) }
+                           ; return (declaracoes, cmds) }
 
 -- <Declaracoes>       -> <Tipo> <ListaId>; <Declaracoes>
 --                     | vazio
@@ -296,83 +307,21 @@ parserSenao :: Parser u Bloco
 parserSenao = do {reservedToken "else"; parserBloco}
               <|> return []
 
--- A SER EXCLUÍDO
--- <Expressao> -> id <Expressao''>
---             | - <Expressao> <Expressao'>
---             | const <Expressao'>
---             | literal
--- parserExpressao :: Parser u Expr
--- parserExpressao = do { id <- identifierToken
---                      ; parserExpressao'' 
---                      ; return $ IdVar id }
---               <|> do { reservedToken "-"
---                      ; e <- parserExpressao
---                      ; parserExpressao'
---                      ; return $ Neg e } 
---               <|> do { c <- naturalOrFloatToken
---                      ; parserExpressao'
---                      ; case c of 
---                         Left n -> return $ Const (CInt n)
---                         Right d -> return $ Const (CDouble d) }
---               <|> do { s <- stringLiteralToken
---                      ; return $ Lit s }
-
--- <Expressao> -> - <Expressao> <Expressao'>
---             | const <Expressao'>
---             | id <Expressao'>
---             | <ChamadaFuncao> <Expressao'>
---             | literal <Expressao'>
 parserExpressao :: Parser u Expr
-parserExpressao = try (do { (Proc id l) <- parserChamadaFuncao
-                     ; parserExpressao' (Chamada id l)
-                     ; return $ Chamada id l })
+parserExpressao = buildExpressionParser precedenceTable (
+                  try (do { (Proc id l) <- parserChamadaFuncao
+                          ; return $ Chamada id l })
               <|> do { id <- identifierToken
-                     ; parserExpressao' $ IdVar id
                      ; return $ IdVar id }
               <|> do { reservedToken "-"
-                     ; expr <- parserExpressao
-                     ; parserExpressao' expr
-                     ; return expr }
+                     ; parserExpressao }
               <|> do { const <- naturalOrFloatToken
                      ; let c = case const of
                             Left n -> Const $ CInt n
                             Right d -> Const $ CDouble d
-                     ; parserExpressao' c
                      ; return c }
               <|> do { s <- stringLiteralToken
-                     ; return $ Lit s }
-
--- <Expressao'> -> + <Expressao> <Expressao'>
---               | - <Expressao> <Expressao'>
---               | * <Expressao> <Expressao'>
---               | / <Expressao> <Expressao'>
---               | vazio
-parserExpressao' :: Expr -> Parser u (Maybe Expr)
-parserExpressao' expr1 = do { reservedOpToken "+"
-                      ; expr2 <- parserExpressao
-                      ; parserExpressao' expr2
-                      ; return $ Just (expr1 :+: expr2) }
-               <|> do { reservedOpToken "-"
-                      ; expr2 <- parserExpressao
-                      ; parserExpressao' expr2
-                      ; return $ Just (expr1 :-: expr2) }
-               <|> do { reservedOpToken "*"
-                      ; expr2 <- parserExpressao
-                      ; parserExpressao' expr2
-                      ; return $ Just (expr1 :*: expr2) }
-               <|> do { reservedOpToken "/"
-                      ; expr2 <- parserExpressao
-                      ; parserExpressao' expr2
-                      ; return $ Just (expr1 :/: expr2) }
-               <|> return Nothing 
-
--- A SER EXCLUÍDO
--- -- <Expressao''> -> <Expressao'>
---               -- | <ListaParametros> <Expressao'>
--- parserExpressao'' :: Parser u (Maybe Expr)
--- parserExpressao'' = do { parserExpressao' }
---                 <|> do { parserListaParametros
---                        ; parserExpressao' }
+                     ; return $ Lit s })
 
 -- <ExpressaoRelacional> -> <Expressao> <ExpressaoRelacional'>
 parserExpressaoRelacional :: Parser u ExprR

@@ -1,0 +1,1 @@
+Prog ["maior" :->: (["a" :#: TDouble,"b" :#: TDouble],TDouble),"fat" :->: (["n" :#: TInt],TInt),"imprimir" :->: (["s" :#: TString,"r" :#: TDouble],TVoid)] [("maior",["m" :#: TInt],[If (Rel (IdVar
