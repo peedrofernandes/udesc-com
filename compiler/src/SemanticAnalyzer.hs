@@ -112,6 +112,33 @@ checkBinaryExpr e1 e2 constructor = do
       _ -> error "Erro: Tipos imcompatíveis na expressão aritmética"
     _ -> error "Erro: Tipos imcompatíveis na expressão aritmética"
 
+checkExprR :: ExprR -> SemanticAnalyzerState ExprR
+checkExprR exprR = case exprR of
+  e1 :==: e2 -> checkBinaryExprR e1 e2 (:==:)
+  e1 :/=: e2 -> checkBinaryExprR e1 e2 (:/=:)
+  e1 :<: e2 -> checkBinaryExprR e1 e2 (:<:)
+  e1 :>: e2 -> checkBinaryExprR e1 e2 (:>:)
+  e1 :<=: e2 -> checkBinaryExprR e1 e2 (:<=:)
+  e1 :>=: e2 -> checkBinaryExprR e1 e2 (:>=:)
+
+checkBinaryExprR :: Expr -> Expr -> (Expr -> Expr -> ExprR) -> SemanticAnalyzerState ExprR
+checkBinaryExprR e1 e2 constructor = do
+  fixedExpr1 <- checkExpr e1
+  fixedExpr2 <- checkExpr e2
+  t1 <- getExprType fixedExpr1
+  t2 <- getExprType fixedExpr2
+  case (t1, t2) of
+    (TInt, TInt) -> return $ constructor fixedExpr1 fixedExpr2
+    (TInt, TDouble) -> return $ constructor (IntDouble fixedExpr1) fixedExpr2
+    (TInt, _) -> error "Erro: Tipos errados na expressão lógica"
+    (TDouble, TInt) -> return $ constructor fixedExpr1 (IntDouble fixedExpr2)
+    (TDouble, TDouble) -> return $ constructor fixedExpr1 fixedExpr2
+    (TDouble, _) -> error "Erro: Tipos errados na expressão lógica"
+    (_, _) -> error "Erro: Tipos errados na expressão lógica"
+    
+
+
+
 
 
 -- - Quando uma variável declarada como double receber o valor de uma expressão
