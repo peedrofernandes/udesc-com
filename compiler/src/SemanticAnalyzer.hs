@@ -19,8 +19,6 @@ warn warning = modify (\(st, warnings) -> (st, warnings ++ ["Warning: " ++ warni
 -- no processo. As regras para coerção de tipos e emissão de mensagens de erro são:
 
 
--- - Expressões com tipos incompatíveis devem emitir mensagens de erro.
--- ------------------------------------
 -- - Em expressões binárias aritméticas ou relacionais quando um dos operandos for
 -- do tipo int e o outro for do tipo double o operando do tipo int deve ser
 -- convertido à double.
@@ -28,6 +26,8 @@ warn warning = modify (\(st, warnings) -> (st, warnings ++ ["Warning: " ++ warni
 -- - O tipo string pode ocorrer apenas em expressões relacionais, os dois operandos
 -- devem ser do mesmo tipo, caso contrário uma mensagem de erro deve ser
 -- emitida.
+-- ------------------------------------
+-- - Expressões com tipos incompatíveis devem emitir mensagens de erro.
 -- ------------------------------------
 
 getExprType :: Expr -> SemanticAnalyzerState Tipo
@@ -86,6 +86,8 @@ checkExpr (Lit str) = return (Lit str)
 checkExpr (IntDouble e) = IntDouble <$> checkExpr e
 checkExpr (DoubleInt e) = DoubleInt <$> checkExpr e
 
+-- - O uso de variáveis não declaradas deve vir informado com uma mensagem de erro.
+-- ------------------------------------
 checkExpr (IdVar id) = do
   (table, warnings) <- get
   let elemFound = Map.lookup id table
@@ -93,13 +95,16 @@ checkExpr (IdVar id) = do
     Just (Left varType) -> return (IdVar id)
     Just (Right functionTuple) -> error "Variável usada não declarada"
     Nothing -> error "Variável usada não declarada"
-    
-checkExpr (Chamada id es) = do
+
+-- - Chamada de funções não declaradas deve ocasionar a emissão de uma
+-- mensagem de erro.
+-- ------------------------------------
+checkExpr (Chamada id exprs) = do
   (table, warnings) <- get
   case Map.lookup id table of
     Just (Left varType) -> error "Função usada não declarada"
-    Just (Right (_, functionReturnType)) -> do 
-      checkedExprs <- sequence [checkExpr e | e <- es]
+    Just (Right (vars, functionReturnType)) -> do
+      checkedExprs <- checkFunctionParameters vars exprs id
       return $ Chamada id checkedExprs
     Nothing -> error "Função usada não declarada"
   
@@ -109,16 +114,12 @@ checkBinaryExpr e1 e2 constructor = do
   fixedExpr2 <- checkExpr e2
   t1 <- getExprType fixedExpr1
   t2 <- getExprType fixedExpr2
-  case t1 of 
-    TDouble -> case t2 of
-      TDouble -> return $ constructor fixedExpr1 fixedExpr2
-      TInt -> return $ constructor fixedExpr1 (IntDouble fixedExpr2)
-      _ -> error "Erro: Tipos incompatíveis na expressão aritmética"
-    TInt -> case t2 of
-      TInt -> return $ constructor fixedExpr1 fixedExpr2
-      TDouble -> return $ constructor (IntDouble fixedExpr1) fixedExpr2
-      _ -> error "Erro: Tipos imcompatíveis na expressão aritmética"
-    _ -> error "Erro: Tipos imcompatíveis na expressão aritmética"
+  case (t1, t2) of 
+    (TInt, TInt) -> return $ constructor fixedExpr1 fixedExpr2
+    (TDouble, TDouble) -> return $ constructor fixedExpr1 fixedExpr2
+    (TInt, TDouble) -> return $ constructor (IntDouble fixedExpr1) fixedExpr2
+    (TDouble, TInt) -> return $ constructor fixedExpr1 (IntDouble fixedExpr2)
+    (_, _) -> error "Erro: Tipos incompatíveis na expressão aritmética"
 
 checkExprR :: ExprR -> SemanticAnalyzerState ExprR
 checkExprR (e1 :==: e2) = checkBinaryExprR e1 e2 (:==:)
@@ -179,67 +180,69 @@ checkComando (Atrib id expr) = do
     Just (Right fn) -> error $ "Erro: Atribuição ao id " ++ show id ++ ", que é uma função"
     Nothing -> error $ "Erro: Atribuição à variável " ++ show id ++ " não declarada"
 
+-- - Chamada de funções não declaradas deve ocasionar a emissão de uma
+-- mensagem de erro.
+-- ------------------------------------
 checkComando (Proc id exprs) = do
   (table, warnings) <- get
   let elemFound = Map.lookup id table
   case elemFound of
-    Just (Left varType) -> error $ "Função " ++ show id ++ " não encontrada"
+    Just (Left varType) -> error $ "Função " ++ show id ++ " não declarada"
     Just (Right (vars, returnType)) -> do
-      exprTypes <- mapM getExprType exprs
-      let varTypes = map (\(_ :#: t) -> t) vars
-      checkedExprs <- checkFunctionParameters varTypes exprs id
-      return $ Proc id checkedExprs 
+      checkedExprs <- checkFunctionParameters vars exprs id
+      return $ Proc id checkedExprs
+    Nothing -> error $ "Função " ++ show id ++ " não declarada"
   
 checkComando (Ret mybExpr) = do
   (table, warnings) <- get
   let elemFound = Map.lookup "this" table
   case elemFound of
-    Just (Left varType) -> error "'this' não pode ser usado como nome de variável."
-    Just (Right (id, retType)) -> do
+    Just (Left varType) -> error "Erro: Há uma variável com o nome reservado 'this'."
+    Just (Right (vars, retType)) -> do
       case mybExpr of
         Just expr -> do
-          t <- getExprType expr
-          if retType == t then return (Ret mybExpr) else error $ "Tipo de retorno inválido - Retorno esperado para a função " ++ show id ++ ": " ++ show retType
-        Nothing -> if retType == TVoid then return (Ret mybExpr) else error $ "Tipo de retorno inválido - Retorno esperado para a função " ++ show id ++ ": " ++ show retType
-    Nothing -> error "Erro de escopo"
+          exprType <- getExprType expr
+          case (retType, exprType) of
+            (TInt, TInt) -> return $ Ret mybExpr
+            (TDouble, TDouble) -> return $ Ret mybExpr
+            (TString, TString) -> return $ Ret mybExpr
+            (TVoid, TVoid) -> return $ Ret mybExpr
+            (TInt, TDouble) -> do 
+              warn "Função retornou Double quando deveria retornar Int"
+              return $ Ret (Just (DoubleInt expr))
+            (TDouble, TInt) -> return $ Ret (Just (IntDouble expr))
+            (_, _) -> error "Erro: Tipo de retorno inválido"
+        Nothing -> if retType == TVoid 
+          then return (Ret mybExpr) 
+          else error "Erro: Tipo de retorno inválido"
+    Nothing -> error "Erro: Erro de escopo"
 
 checkComando cmd = return cmd
-
-checkFunctionParameters :: [Tipo] -> [Expr] -> Id -> SemanticAnalyzerState [Expr]
-checkFunctionParameters [] [] id = return []
-checkFunctionParameters (t : ts) (e : es) id = do 
-  exprType <- getExprType e
-  case (t, exprType) of
-    (TInt, TInt) -> (e :) <$> checkFunctionParameters ts es id
-    (TInt, TDouble) -> do
-      warn "Variável do tipo int recebeu valor de variável do tipo double"
-      (DoubleInt e :) <$> checkFunctionParameters ts es id
-    (TDouble, TDouble) -> (e :) <$> checkFunctionParameters ts es id
-    (TDouble, TInt) -> (IntDouble e :) <$> checkFunctionParameters ts es id
-    (TString, TString) -> (e :) <$> checkFunctionParameters ts es id
-    (_, _) -> error $ "Erro: Parâmetros inválidos na função " ++ id ++ "!"
-      
-
-
-
-
-
-
-
 
 -- - Chamadas de funções com número de parâmetros errados ou com parâmetros
 -- formais e reais com tipos conflitantes devem ocasionar a emissão de mensagens
 -- de erro.
 -- ------------------------------------
-
-
-
--- - O uso de variáveis não declaradas deve informado com uma mensagem de erro.
--- ------------------------------------
-
--- - Chamada de funções não declaradas deve ocasionar a emissão de uma
--- mensagem de erro.
--- ------------------------------------
+checkFunctionParameters :: [Var] -> [Expr] -> Id -> SemanticAnalyzerState [Expr]
+checkFunctionParameters [] _ _ = return []
+checkFunctionParameters _ [] _ = return []
+checkFunctionParameters (v : vs) (e : es) id = do 
+  if length (v : vs) /= length (e : es) 
+    then error $ "Erro: a função " ++ show id ++ "() espera " ++ show (length (v : vs)) ++ " parâmetros, mas foram dados " ++ show (length (e : es)) ++ " expressões"  
+  else do
+    checkedExpr <- checkExpr e
+    exprType <- getExprType checkedExpr
+    let (_ :#: t) = v
+    case (t, exprType) of
+      (TInt, TInt) -> (checkedExpr :) <$> checkFunctionParameters vs es id
+      (TInt, TDouble) -> do
+        warn $ "Parâmetro da função " ++ id ++ "(), do tipo Int, recebeu valor do tipo Double"
+        (DoubleInt e :) <$> checkFunctionParameters vs es id
+      (TDouble, TDouble) -> (checkedExpr :) <$> checkFunctionParameters vs es id
+      (TDouble, TInt) -> (IntDouble checkedExpr :) <$> checkFunctionParameters vs es id
+      (TString, TString) -> (checkedExpr :) <$> checkFunctionParameters vs es id
+      (TVoid, TVoid) -> (checkedExpr :) <$> checkFunctionParameters vs es id
+      (_, _) -> error $ "Erro: Parâmetros inválidos na função " ++ id ++ "!"
 
 -- - A existência de variáveis multiplamente declaradas em uma mesma função deve
 -- ocasionar a emissão de uma mensagem de erro.

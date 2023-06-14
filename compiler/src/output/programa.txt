@@ -1,1 +1,24 @@
-Prog ["maior" :->: (["a" :#: TDouble,"b" :#: TDouble],TDouble),"fat" :->: (["n" :#: TInt],TInt),"imprimir" :->: (["s" :#: TString,"r" :#: TDouble],TVoid)] [("maior",["m" :#: TInt],[If (Rel (IdVar
+Prog 
+
+[
+  "maior" :->: (["a" :#: TDouble,"b" :#: TDouble],TDouble),
+  "fat" :->: (["n" :#: TInt],TInt),
+  "imprimir" :->: (["s" :#: TString,"r" :#: TDouble],TVoid)
+]
+
+[
+  (
+    "maior",
+    ["m" :#: TInt],
+    [
+      If (Rel (IdVar "a" :>: IdVar "b")) [Atrib "m" (IdVar "a")] [Atrib "m" (IdVar "b")],Ret (Just (IdVar "b"))
+    ]
+  ),
+
+  ("fat",["f" :#: TInt],[Atrib "f" (Const (CInt 0)),While (Rel (IdVar "n" :>: Const (CInt 0))) [Atrib "f" (IdVar "f" :*: IdVar "n"),Atrib "n" (IdVar "n" :-: Const (CInt 1))],Ret (Just (IdVar "f"))]),
+  ("imprimir",["s" :#: TInt],[Imp (IdVar "s"),Imp (IdVar "r"),Ret (Just (Const (CInt 0)))])
+]
+
+["x" :#: TInt,"num" :#: TInt] 
+
+[Imp (Lit "Numero:"),Leitura "num",Atrib "x" (Chamada "fat" [Const (CInt 4)]),Atrib "a" (Chamada "maior" [Const (CDouble 2.5),Const (CInt 10)]),Proc "imprimir" [Lit "teste:",Const (CInt 2)],Ret (Just (Const (CInt 0)))]
