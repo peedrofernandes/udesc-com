@@ -8,9 +8,9 @@ import Debug.Trace
 import qualified Data.Map as Map
 
 type SymbolTable = Map.Map Id (Either Tipo ([Var], Tipo))
-type SymbolTableState a = StateT (SymbolTable, [String]) IO a
+type SemanticAnalyzerState a = StateT (SymbolTable, [String]) IO a
 
-warn :: String -> SymbolTableState ()
+warn :: String -> SemanticAnalyzerState ()
 warn warning = modify (\(st, warnings) -> (st, warnings ++ ["Warning: " ++ warning]))
 
 -- O analisador semântico deve receber como entrada a AST, representada pelo tipo de
@@ -26,7 +26,7 @@ warn warning = modify (\(st, warnings) -> (st, warnings ++ ["Warning: " ++ warni
 -- convertido à double.
 -- ------------------------------------
 
-getExprType :: Expr -> SymbolTableState Tipo
+getExprType :: Expr -> SemanticAnalyzerState Tipo
 getExprType expr = do
   (table, warnings) <- get -- Obter o estado na tabela de símbolos, que armazena nomes de funções e variáveis
   case expr of
@@ -53,7 +53,7 @@ getExprType expr = do
     IntDouble _ -> return TDouble
     DoubleInt _ -> return TInt
 
-getBinaryArithmeticExprType :: Expr -> Expr -> SymbolTableState Tipo
+getBinaryArithmeticExprType :: Expr -> Expr -> SemanticAnalyzerState Tipo
 getBinaryArithmeticExprType e1 e2 = do
   t1 <- getExprType e1
   t2 <- getExprType e2
@@ -68,7 +68,7 @@ getBinaryArithmeticExprType e1 e2 = do
       _ -> error "Erro: Tipos incompatíveis na expressão aritmética"
     _ -> error "Erro: Tipos inválidos na expressão aritmética"
       
-checkExpr :: Expr -> SymbolTableState Expr
+checkExpr :: Expr -> SemanticAnalyzerState Expr
 checkExpr expr  = do
   (table, warnings) <- get
   case expr of
@@ -95,7 +95,7 @@ checkExpr expr  = do
     IntDouble _ -> return expr
     DoubleInt _ -> return expr
   
-checkBinaryExpr :: Expr -> Expr -> (Expr -> Expr -> Expr) -> SymbolTableState Expr
+checkBinaryExpr :: Expr -> Expr -> (Expr -> Expr -> Expr) -> SemanticAnalyzerState Expr
 checkBinaryExpr e1 e2 constructor = do
   fixedExpr1 <- checkExpr e1
   fixedExpr2 <- checkExpr e2
@@ -128,7 +128,7 @@ checkBinaryExpr e1 e2 constructor = do
 -- - Atribuição de variáveis ou retorno de funções com tipos conflitantes devem
 -- ocasionar a emissão de mensagens de erro.
 -- ------------------------------------
-checkComando :: Comando -> SymbolTableState Comando
+checkComando :: Comando -> SemanticAnalyzerState Comando
 checkComando cmd = do
   (table, warnings) <- get
   case cmd of

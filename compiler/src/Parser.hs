@@ -130,7 +130,6 @@ import Data.List (unzip4)
 import qualified GHC.Generics as Expressao
 import Text.Parsec.Expr (buildExpressionParser)
 
-import Handlers
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 -- <Programa>          -> <ListaFuncoes> <BlocoPrincipal>

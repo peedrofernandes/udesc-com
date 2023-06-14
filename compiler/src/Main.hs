@@ -32,11 +32,11 @@ parseExpr = do
       writeFile "./output/expr.txt" (show arvoreSintatica ++ "\n\n")
       appendFile "./output/expr.txt" (show (semanticExpr arvoreSintatica))
 
-runSymbolTableState :: SymbolTableState a -> IO a
-runSymbolTableState st = do 
-  (result, (_, warnings)) <- runStateT st (Map.empty, [])
+runSemanticAnalyzer :: SemanticAnalyzerState a -> IO a
+runSemanticAnalyzer state = do 
+  (result, (_, warnings)) <- runStateT state (Map.empty, [])
   mapM_ putStrLn warnings
   return result
 
 semanticExpr :: Expr -> Expr
-semanticExpr expr = unsafePerformIO $ runSymbolTableState $ checkExpr expr
+semanticExpr expr = unsafePerformIO $ runSemanticAnalyzer $ checkExpr expr
