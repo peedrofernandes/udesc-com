@@ -25,33 +25,40 @@ warn warning = modify (\(st, warnings) -> (st, warnings ++ ["Warning: " ++ warni
 -- do tipo int e o outro for do tipo double o operando do tipo int deve ser
 -- convertido à double.
 -- ------------------------------------
+-- - O tipo string pode ocorrer apenas em expressões relacionais, os dois operandos
+-- devem ser do mesmo tipo, caso contrário uma mensagem de erro deve ser
+-- emitida.
+-- ------------------------------------
 
 getExprType :: Expr -> SemanticAnalyzerState Tipo
-getExprType expr = do
+getExprType (e1 :+: e2) = getBinaryArithmeticExprType e1 e2 
+getExprType (e1 :-: e2) = getBinaryArithmeticExprType e1 e2 
+getExprType (e1 :*: e2) = getBinaryArithmeticExprType e1 e2 
+getExprType (e1 :/: e2) = getBinaryArithmeticExprType e1 e2 
+getExprType (Neg e) = getExprType e
+getExprType (Lit _) = return TString
+getExprType (IntDouble _) = return TDouble
+getExprType (DoubleInt _) = return TInt
+
+getExprType (Const c) = case c of
+  CDouble c -> return TDouble
+  CInt c -> return TInt
+
+getExprType (IdVar id) = do
   (table, warnings) <- get -- Obter o estado na tabela de símbolos, que armazena nomes de funções e variáveis
-  case expr of
-    e1 :+: e2 -> getBinaryArithmeticExprType e1 e2
-    e1 :-: e2 -> getBinaryArithmeticExprType e1 e2
-    e1 :*: e2 -> getBinaryArithmeticExprType e1 e2
-    e1 :/: e2 -> getBinaryArithmeticExprType e1 e2
-    Neg e -> getExprType e
-    Const c -> case c of
-      CDouble c -> return TDouble
-      CInt c -> return TInt
-    IdVar id -> do
-      let elemFound = Map.lookup id table
-      case elemFound of -- Pegar o id na tabela de símbolos
-        Just (Left varType) -> return varType -- O valor encontrado na tabela é uma variável
-        Just (Right functionTuple) -> error "Variável usada não declarada" -- O valor encontrado na tabela é uma função
-        Nothing -> error "Variável usada não declarada" -- O id usado na expressão não existe na tabela
-    Chamada id es -> do
-      case Map.lookup id table of -- Pegar o id na tabela de símbolos
-        Just (Left varType) -> error "Função usada não declarada" -- O valor encontrado na tabela é uma variável
-        Just (Right (_, functionReturnType)) -> return functionReturnType -- O valor encontrado na tabela é uma função
-        Nothing -> error "Função usada não declarada" -- O id usado na expressão não existe na tabela
-    Lit _ -> return TString
-    IntDouble _ -> return TDouble
-    DoubleInt _ -> return TInt
+  let elemFound = Map.lookup id table -- Pegar o id na tabela de símbolos
+  case elemFound of
+    Just (Left varType) -> return varType -- O valor encontrado na tabela é uma variável
+    Just (Right functionTuple) -> error $ "Erro: " ++ id ++ " é uma função e está sendo usada como variável" -- O valor encontrado na tabela é uma função
+    Nothing -> error "Erro: Variável usada não encontrada" -- O id usado na expressão não existe na tabela
+
+getExprType (Chamada id es) = do
+  (table, warnings) <- get
+  let elemFound = Map.lookup id table -- Pegar o id na tabela de símbolos
+  case elemFound of
+    Just (Left varType) -> error $ "Erro: " ++ id ++ " é uma variável e está sendo usada como uma função" -- O valor encontrado na tabela é uma variável
+    Just (Right (_, functionReturnType)) -> return functionReturnType -- O valor encontrado na tabela é uma função
+    Nothing -> error "Erro: Função usada não declarada" -- O id usado na expressão não existe na tabela
 
 getBinaryArithmeticExprType :: Expr -> Expr -> SemanticAnalyzerState Tipo
 getBinaryArithmeticExprType e1 e2 = do
@@ -69,31 +76,32 @@ getBinaryArithmeticExprType e1 e2 = do
     _ -> error "Erro: Tipos inválidos na expressão aritmética"
       
 checkExpr :: Expr -> SemanticAnalyzerState Expr
-checkExpr expr  = do
+checkExpr (e1 :+: e2) = checkBinaryExpr e1 e2 (:+:)
+checkExpr (e1 :-: e2) = checkBinaryExpr e1 e2 (:-:)
+checkExpr (e1 :*: e2) = checkBinaryExpr e1 e2 (:*:)
+checkExpr (e1 :/: e2) = checkBinaryExpr e1 e2 (:/:)
+checkExpr (Neg e) = checkExpr e
+checkExpr (Const c) = return (Const c)
+checkExpr (Lit str) = return (Lit str)
+checkExpr (IntDouble e) = IntDouble <$> checkExpr e
+checkExpr (DoubleInt e) = DoubleInt <$> checkExpr e
+
+checkExpr (IdVar id) = do
   (table, warnings) <- get
-  case expr of
-    e1 :+: e2 -> checkBinaryExpr e1 e2 (:+:)
-    e1 :-: e2 -> checkBinaryExpr e1 e2 (:-:)
-    e1 :*: e2 -> checkBinaryExpr e1 e2 (:*:)
-    e1 :/: e2 -> checkBinaryExpr e1 e2 (:/:)
-    Neg e -> checkExpr e
-    Const c -> return expr
-    IdVar id -> do
-      let elemFound = Map.lookup id table
-      case elemFound of
-        Just (Left varType) -> return expr
-        Just (Right functionTuple) -> error "Variável usada não declarada"
-        Nothing -> error "Variável usada não declarada"
-    Chamada id es -> do
-      case Map.lookup id table of
-        Just (Left varType) -> error "Função usada não declarada"
-        Just (Right (_, functionReturnType)) -> do 
-          checkedExprs <- sequence [checkExpr e | e <- es]
-          return $ Chamada id checkedExprs
-        Nothing -> error "Função usada não declarada"
-    Lit _ -> return expr
-    IntDouble _ -> return expr
-    DoubleInt _ -> return expr
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just (Left varType) -> return (IdVar id)
+    Just (Right functionTuple) -> error "Variável usada não declarada"
+    Nothing -> error "Variável usada não declarada"
+    
+checkExpr (Chamada id es) = do
+  (table, warnings) <- get
+  case Map.lookup id table of
+    Just (Left varType) -> error "Função usada não declarada"
+    Just (Right (_, functionReturnType)) -> do 
+      checkedExprs <- sequence [checkExpr e | e <- es]
+      return $ Chamada id checkedExprs
+    Nothing -> error "Função usada não declarada"
   
 checkBinaryExpr :: Expr -> Expr -> (Expr -> Expr -> Expr) -> SemanticAnalyzerState Expr
 checkBinaryExpr e1 e2 constructor = do
@@ -113,13 +121,12 @@ checkBinaryExpr e1 e2 constructor = do
     _ -> error "Erro: Tipos imcompatíveis na expressão aritmética"
 
 checkExprR :: ExprR -> SemanticAnalyzerState ExprR
-checkExprR exprR = case exprR of
-  e1 :==: e2 -> checkBinaryExprR e1 e2 (:==:)
-  e1 :/=: e2 -> checkBinaryExprR e1 e2 (:/=:)
-  e1 :<: e2 -> checkBinaryExprR e1 e2 (:<:)
-  e1 :>: e2 -> checkBinaryExprR e1 e2 (:>:)
-  e1 :<=: e2 -> checkBinaryExprR e1 e2 (:<=:)
-  e1 :>=: e2 -> checkBinaryExprR e1 e2 (:>=:)
+checkExprR (e1 :==: e2) = checkBinaryExprR e1 e2 (:==:)
+checkExprR (e1 :/=: e2) = checkBinaryExprR e1 e2 (:/=:)
+checkExprR (e1 :<: e2)  = checkBinaryExprR e1 e2 (:<:)
+checkExprR (e1 :>: e2)  = checkBinaryExprR e1 e2 (:>:)
+checkExprR (e1 :<=: e2) = checkBinaryExprR e1 e2 (:<=:)
+checkExprR (e1 :>=: e2) = checkBinaryExprR e1 e2 (:>=:)
 
 checkBinaryExprR :: Expr -> Expr -> (Expr -> Expr -> ExprR) -> SemanticAnalyzerState ExprR
 checkBinaryExprR e1 e2 constructor = do
@@ -134,12 +141,9 @@ checkBinaryExprR e1 e2 constructor = do
     (TDouble, TInt) -> return $ constructor fixedExpr1 (IntDouble fixedExpr2)
     (TDouble, TDouble) -> return $ constructor fixedExpr1 fixedExpr2
     (TDouble, _) -> error "Erro: Tipos errados na expressão lógica"
+    (TString, TString) -> return $ constructor fixedExpr1 fixedExpr2
     (_, _) -> error "Erro: Tipos errados na expressão lógica"
     
-
-
-
-
 
 -- - Quando uma variável declarada como double receber o valor de uma expressão
 -- de tipo int, o resultado da expressão deve ser convertido para o tipo double. Isso
@@ -156,57 +160,70 @@ checkBinaryExprR e1 e2 constructor = do
 -- ocasionar a emissão de mensagens de erro.
 -- ------------------------------------
 checkComando :: Comando -> SemanticAnalyzerState Comando
-checkComando cmd = do
+
+checkComando (Atrib id expr) = do
   (table, warnings) <- get
-  case cmd of
-    Atrib id expr -> do
-      let elemFound = Map.lookup id table
-      case elemFound of
-        Just (Left varType) -> do 
-          exprType <- getExprType expr
-          case (varType, exprType) of
-            (TDouble, TInt) -> return $ Atrib id (IntDouble expr)
-            (TInt, TDouble) -> do
-              warn $ "Variável " ++ show id ++ ", do tipo Int, recebeu um valor double"
-              return $ Atrib id (DoubleInt expr)
-            (TInt, TInt) -> return cmd
-            (TDouble, TDouble) -> return cmd
-            (TVoid, TVoid) -> return cmd
-            (TString, TString) -> return cmd
-            _ -> error $ "Erro: Atribuição de tipo " ++ show exprType ++ " à variável de tipo " ++ show varType
-        Just (Right fn) -> error $ "Erro: Atribuição ao id " ++ show id ++ ", que é uma função"
-        Nothing -> error $ "Erro: Atribuição à variável " ++ show id ++ " não declarada"
-    Proc id exprs -> do
-      let elemFound = Map.lookup id table
-      case elemFound of
-        Just (Left varType) -> error $ "Função " ++ show id ++ " não encontrada"
-        Just (Right (vars, returnType)) -> do
-          exprTypes <- mapM getExprType exprs
-          let varTypes = map (\(_ :#: t) -> t) vars
-          if exprTypes == varTypes then return cmd
-            else error $ "Erro: Parâmetros inválidos na chamada da função " ++ id 
-    Ret mybExpr -> do
-      let elemFound = Map.lookup "this" table
-      case elemFound of
-        Just (Left varType) -> error "'this' não pode ser usado como nome de variável."
-        Just (Right (id, retType)) -> do
-          case mybExpr of
-            Just expr -> do
-              t <- getExprType expr
-              if retType == t then return cmd else error $ "Tipo de retorno inválido - Retorno esperado para a função " ++ show id ++ ": " ++ show retType
-            Nothing -> if retType == TVoid then return cmd else error $ "Tipo de retorno inválido - Retorno esperado para a função " ++ show id ++ ": " ++ show retType
-        Nothing -> error "Erro de escopo"
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just (Left varType) -> do 
+      exprType <- getExprType expr
+      case (varType, exprType) of
+        (TDouble, TInt) -> return $ Atrib id (IntDouble expr)
+        (TInt, TDouble) -> do
+          warn $ "Variável " ++ show id ++ ", do tipo Int, recebeu um valor double"
+          return $ Atrib id (DoubleInt expr)
+        (TInt, TInt) -> return (Atrib id expr)
+        (TDouble, TDouble) -> return (Atrib id expr)
+        (TVoid, TVoid) -> return (Atrib id expr)
+        _ -> error $ "Erro: Atribuição de tipo " ++ show exprType ++ " à variável de tipo " ++ show varType
+    Just (Right fn) -> error $ "Erro: Atribuição ao id " ++ show id ++ ", que é uma função"
+    Nothing -> error $ "Erro: Atribuição à variável " ++ show id ++ " não declarada"
+
+checkComando (Proc id exprs) = do
+  (table, warnings) <- get
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just (Left varType) -> error $ "Função " ++ show id ++ " não encontrada"
+    Just (Right (vars, returnType)) -> do
+      exprTypes <- mapM getExprType exprs
+      let varTypes = map (\(_ :#: t) -> t) vars
+      checkedExprs <- checkFunctionParameters varTypes exprs id
+      return $ Proc id checkedExprs 
+  
+checkComando (Ret mybExpr) = do
+  (table, warnings) <- get
+  let elemFound = Map.lookup "this" table
+  case elemFound of
+    Just (Left varType) -> error "'this' não pode ser usado como nome de variável."
+    Just (Right (id, retType)) -> do
+      case mybExpr of
+        Just expr -> do
+          t <- getExprType expr
+          if retType == t then return (Ret mybExpr) else error $ "Tipo de retorno inválido - Retorno esperado para a função " ++ show id ++ ": " ++ show retType
+        Nothing -> if retType == TVoid then return (Ret mybExpr) else error $ "Tipo de retorno inválido - Retorno esperado para a função " ++ show id ++ ": " ++ show retType
+    Nothing -> error "Erro de escopo"
+
+checkComando cmd = return cmd
+
+checkFunctionParameters :: [Tipo] -> [Expr] -> Id -> SemanticAnalyzerState [Expr]
+checkFunctionParameters [] [] id = return []
+checkFunctionParameters (t : ts) (e : es) id = do 
+  exprType <- getExprType e
+  case (t, exprType) of
+    (TInt, TInt) -> (e :) <$> checkFunctionParameters ts es id
+    (TInt, TDouble) -> do
+      warn "Variável do tipo int recebeu valor de variável do tipo double"
+      (DoubleInt e :) <$> checkFunctionParameters ts es id
+    (TDouble, TDouble) -> (e :) <$> checkFunctionParameters ts es id
+    (TDouble, TInt) -> (IntDouble e :) <$> checkFunctionParameters ts es id
+    (TString, TString) -> (e :) <$> checkFunctionParameters ts es id
+    (_, _) -> error $ "Erro: Parâmetros inválidos na função " ++ id ++ "!"
       
-          
-      
 
 
 
 
--- - O tipo string pode ocorrer apenas em expressões relacionais, os dois operandos
--- devem ser do mesmo tipo, caso contrário uma mensagem de erro deve ser
--- emitida.
--- ------------------------------------
+
 
 
 
