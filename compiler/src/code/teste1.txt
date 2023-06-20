@@ -10,30 +10,30 @@ double maior (double a, double b)
 int fat (int n)
 {
   int f;
-  
+
   f = 0;
+
   while (n > 0)
   { 
     f = f * n;
     n = n - 1;
   }
-  return f;
 }
    
 
 void imprimir(string s, double r)
 {
-  int s;
+  int m;
   
   print (s);
   print (r);
-  return 0;
+  // return 0;
 }
 
 {
   int x, num;
   double a;
-  int x;
+  // int x;
   
   print("Numero:");
   read (num);

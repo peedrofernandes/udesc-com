@@ -201,7 +201,7 @@ parserDeclaracoes = do { t <- parserTipo
                        ; ids <- parserListaId
                        ; semiToken
                        ; ds <- parserDeclaracoes
-                       ; return $ getVars (t, ids)
+                       ; return $ getVars (t, ids) ++ ds
                        } <|> return []
 
 

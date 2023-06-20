@@ -10,12 +10,20 @@ type Id = String
 data Tipo = TDouble | TInt | TString | TVoid deriving Show
 
 instance Eq Tipo where
-  (==) :: Tipo -> Tipo -> Bool
   TInt == TInt = True
   TDouble == TDouble = True
   TString == TString = True
   TVoid == TVoid = True
   _ == _ = False
+
+-- instance Eq Tipo where
+--   (==) :: Tipo -> Tipo -> Bool
+--   (==) TInt TInt = True
+--   (==) TDouble TDouble = True
+--   (==) TString TString = True
+--   (==) TVoid TVoid = True
+--   (==) _ _ = False
+
 
 data TCons = CDouble Double | CInt Integer deriving Show
 data Expr = Expr :+: Expr

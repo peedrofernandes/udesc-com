@@ -3,15 +3,16 @@ module SemanticAnalyzer where
 import Control.Monad.State
 import Control.Monad.Writer
 import CompilerProps
-import Debug.Trace
+import Debug.Trace (trace)
 
 import qualified Data.Map as Map
+import Control.Monad.Except (ExceptT)
 
 type SymbolTable = Map.Map Id (Either Tipo ([Var], Tipo))
-type SemanticAnalyzerState a = StateT (SymbolTable, [String]) IO a
+type SemanticAnalyzerState a = StateT (Id, SymbolTable, [String]) IO a
 
 warn :: String -> SemanticAnalyzerState ()
-warn warning = modify (\(st, warnings) -> (st, warnings ++ ["Warning: " ++ warning]))
+warn warning = modify (\(scope, st, warnings) -> (scope, st, warnings ++ ["Warning: " ++ warning]))
 
 -- O analisador semântico deve receber como entrada a AST, representada pelo tipo de
 -- dado algébrico Programa, fazer a verificação de tipos e retornar uma AST
@@ -45,15 +46,16 @@ getExprType (Const c) = case c of
   CInt c -> return TInt
 
 getExprType (IdVar id) = do
-  (table, warnings) <- get -- Obter o estado na tabela de símbolos, que armazena nomes de funções e variáveis
+  (scope, table, _) <- get -- Obter o estado na tabela de símbolos, que armazena nomes de funções e variáveis
   let elemFound = Map.lookup id table -- Pegar o id na tabela de símbolos
   case elemFound of
     Just (Left varType) -> return varType -- O valor encontrado na tabela é uma variável
     Just (Right functionTuple) -> error $ "Erro: " ++ id ++ " é uma função e está sendo usada como variável" -- O valor encontrado na tabela é uma função
-    Nothing -> error "Erro: Variável usada não encontrada" -- O id usado na expressão não existe na tabela
+    Nothing -> error $ "Erro: Variável " ++ show id ++ " foi usada em uma expressao em '" ++ scope ++ "', mas não foi declarada" -- O id usado na expressão não existe na tabela
+    -- Nothing -> return TInt
 
 getExprType (Chamada id es) = do
-  (table, warnings) <- get
+  (_, table, _) <- get
   let elemFound = Map.lookup id table -- Pegar o id na tabela de símbolos
   case elemFound of
     Just (Left varType) -> error $ "Erro: " ++ id ++ " é uma variável e está sendo usada como uma função" -- O valor encontrado na tabela é uma variável
@@ -89,18 +91,18 @@ checkExpr (DoubleInt e) = DoubleInt <$> checkExpr e
 -- - O uso de variáveis não declaradas deve vir informado com uma mensagem de erro.
 -- ------------------------------------
 checkExpr (IdVar id) = do
-  (table, warnings) <- get
+  (scope, table, _) <- get
   let elemFound = Map.lookup id table
   case elemFound of
     Just (Left varType) -> return (IdVar id)
-    Just (Right functionTuple) -> error "Variável usada não declarada"
-    Nothing -> error "Variável usada não declarada"
+    Just (Right functionTuple) -> error $ "'" ++ id ++ "' é uma função e foi usada como variável em '" ++ scope ++ "'"
+    Nothing -> error $ "Variável '" ++ id ++ "' não foi declarada em '" ++ scope ++ "'"
 
 -- - Chamada de funções não declaradas deve ocasionar a emissão de uma
 -- mensagem de erro.
 -- ------------------------------------
 checkExpr (Chamada id exprs) = do
-  (table, warnings) <- get
+  (_, table, _) <- get
   case Map.lookup id table of
     Just (Left varType) -> error "Função usada não declarada"
     Just (Right (vars, functionReturnType)) -> do
@@ -162,29 +164,49 @@ checkBinaryExprR e1 e2 constructor = do
 -- ------------------------------------
 checkComando :: Comando -> SemanticAnalyzerState Comando
 
+checkComando (If exprL b1 b2) = do
+  checkedExprL <- checkExprL exprL
+  checkedB1 <- checkBloco b1
+  checkedB2 <- checkBloco b2
+  return $ If checkedExprL checkedB1 checkedB2
+
+checkComando (While exprL b) = do
+  checkedExprL <- checkExprL exprL
+  checkedB <- checkBloco b
+  return $ While checkedExprL checkedB
+
 checkComando (Atrib id expr) = do
-  (table, warnings) <- get
+  (scope, table, _) <- get
   let elemFound = Map.lookup id table
   case elemFound of
     Just (Left varType) -> do 
       exprType <- getExprType expr
       case (varType, exprType) of
-        (TDouble, TInt) -> return $ Atrib id (IntDouble expr)
-        (TInt, TDouble) -> do
-          warn $ "Variável " ++ show id ++ ", do tipo Int, recebeu um valor double"
-          return $ Atrib id (DoubleInt expr)
         (TInt, TInt) -> return (Atrib id expr)
         (TDouble, TDouble) -> return (Atrib id expr)
         (TVoid, TVoid) -> return (Atrib id expr)
-        _ -> error $ "Erro: Atribuição de tipo " ++ show exprType ++ " à variável de tipo " ++ show varType
+        (TString, TString) -> return (Atrib id expr)
+        (TDouble, TInt) -> return $ Atrib id (IntDouble expr)
+        (TInt, TDouble) -> do
+          warn $ "Variável '" ++ id ++ "', do tipo Int, recebeu um valor double em '" ++ scope ++ "'"
+          return $ Atrib id (DoubleInt expr)
+        (_, _) -> error $ "Erro: Atribuição de tipo '" ++ show exprType ++ "' à variável de tipo '" ++ show varType ++ "' em '" ++ scope ++ "'"
     Just (Right fn) -> error $ "Erro: Atribuição ao id " ++ show id ++ ", que é uma função"
-    Nothing -> error $ "Erro: Atribuição à variável " ++ show id ++ " não declarada"
+    Nothing -> error $ "Erro: Atribuição à variável " ++ show id ++ " não declarada em '" ++ scope ++ "'"
+
+checkComando (Leitura id) = do
+  verifyIfVarExists id
+  return $ Leitura id
+
+checkComando (Imp expr) = do
+  checkedExpr <- checkExpr expr
+  return $ Imp checkedExpr
 
 -- - Chamada de funções não declaradas deve ocasionar a emissão de uma
 -- mensagem de erro.
 -- ------------------------------------
 checkComando (Proc id exprs) = do
-  (table, warnings) <- get
+  (_, table, _) <- get
   let elemFound = Map.lookup id table
   case elemFound of
     Just (Left varType) -> error $ "Função " ++ show id ++ " não declarada"
@@ -194,10 +216,10 @@ checkComando (Proc id exprs) = do
     Nothing -> error $ "Função " ++ show id ++ " não declarada"
   
 checkComando (Ret mybExpr) = do
-  (table, warnings) <- get
-  let elemFound = Map.lookup "this" table
+  (scope, table, _) <- get
+  let elemFound = Map.lookup scope table
   case elemFound of
-    Just (Left varType) -> error "Erro: Há uma variável com o nome reservado 'this'."
+    Just (Left varType) -> error $ "Erro: Mesmo nome para variável e função (" ++ scope ++ ")." 
     Just (Right (vars, retType)) -> do
       case mybExpr of
         Just expr -> do
@@ -208,16 +230,22 @@ checkComando (Ret mybExpr) = do
             (TString, TString) -> return $ Ret mybExpr
             (TVoid, TVoid) -> return $ Ret mybExpr
             (TInt, TDouble) -> do 
-              warn "Função retornou Double quando deveria retornar Int"
+              warn $ "Função '" ++ scope ++ "' retornou Double quando deveria retornar Int"
               return $ Ret (Just (DoubleInt expr))
             (TDouble, TInt) -> return $ Ret (Just (IntDouble expr))
-            (_, _) -> error "Erro: Tipo de retorno inválido"
+            (a, b) -> error $ "Erro: Funcao '" ++ scope ++ "' retornou " ++ show b ++ " quando deveria retornar " ++ show a ++ "."
+            -- ------------------------------------------------------------------------
         Nothing -> if retType == TVoid 
           then return (Ret mybExpr) 
           else error "Erro: Tipo de retorno inválido"
     Nothing -> error "Erro: Erro de escopo"
 
-checkComando cmd = return cmd
+checkExprL :: ExprL -> SemanticAnalyzerState ExprL
+checkExprL (Rel exprR) = do
+  checkedExprR <- checkExprR exprR
+  return $ Rel exprR
+
+checkExprL exprL = return exprL
 
 -- - Chamadas de funções com número de parâmetros errados ou com parâmetros
 -- formais e reais com tipos conflitantes devem ocasionar a emissão de mensagens
@@ -248,9 +276,134 @@ checkFunctionParameters (v : vs) (e : es) id = do
 -- ocasionar a emissão de uma mensagem de erro.
 -- ------------------------------------
 
+checkVariableDeclarations :: [Var] -> SemanticAnalyzerState [Var]
+checkVariableDeclarations [] = return []
+checkVariableDeclarations ((id :#: tipo) : vs) = do
+  (scope, table, _) <- get
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just _ -> error $ "Erro: Variavel " ++ id ++ " duplamente declarada na função " ++ scope ++ "."
+    Nothing -> do
+      insertVarIntoTable (id :#: tipo)
+      ((id :#: tipo) :) <$> checkVariableDeclarations vs
+
+checkBloco :: [Comando] -> SemanticAnalyzerState [Comando]
+checkBloco [] = return []
+checkBloco (c : cs) = do
+  checkedComando <- checkComando c
+  checkedBloco <- checkBloco cs
+  return (checkedComando : checkedBloco) 
+
+
 -- - A existência de funções multiplamente declaradas deve ocasionar uma
 -- mensagem de erro.
 -- ------------------------------------
+checkFunctionDeclarations :: [Funcao] -> SemanticAnalyzerState [Funcao]
+checkFunctionDeclarations [] = return []
+checkFunctionDeclarations ((id :->: (varsArgumento, tipoRetorno)) : fs) = do
+  (_, table, warnings) <- get
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just _ -> error $ "Erro: Funcao " ++ id ++ " multiplamente declarada!"
+    Nothing -> do
+      insertFunctionDeclarationIntoTable (id :->: (varsArgumento, tipoRetorno))
+      ((id :->: (varsArgumento, tipoRetorno)) :) <$> checkFunctionDeclarations fs
+
+
+checkImplFuncoes :: [(Id, [Var], Bloco)] -> SemanticAnalyzerState [(Id, [Var], Bloco)]
+checkImplFuncoes [] = return []
+checkImplFuncoes ((id, varsEscopo, bloco) : ts) = do
+  (_, table, warnings) <- get
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just (Right (varsArgumento, tipoRetorno)) -> do
+      limparEscopoFuncao
+      setScope id
+      checkedVars <- checkVariableDeclarations varsEscopo
+      checkedBloco <- checkBloco bloco
+      ((id, checkedVars, checkedBloco) :) <$> checkImplFuncoes ts
+    Just (Left tipo) -> error "Erro: Função implementada não declarada!"
+    Nothing -> error "Erro: Função implementada não declarada!"
+
+
+checkPrograma :: Programa -> SemanticAnalyzerState Programa
+checkPrograma (Prog funcoes implFuncoes varsEscopoBlocoPrincipal blocoPrincipal) = do
+  insertFunctionDeclarationIntoTable $ "main" :->: ([], TInt)
+
+  -- 
+  checkedFuncoes <- checkFunctionDeclarations funcoes
+  checkedImplFuncoes <- checkImplFuncoes implFuncoes
+
+  -- blocoPrincipal
+  limparEscopoFuncao
+  setScopeMain
+  checkedVarsEscopoBlocoPrincipal <- checkVariableDeclarations varsEscopoBlocoPrincipal
+  checkedBlocoPrincipal <- checkBloco blocoPrincipal
+  return $ Prog checkedFuncoes checkedImplFuncoes checkedVarsEscopoBlocoPrincipal checkedBlocoPrincipal
+
+limparEscopoFuncao :: SemanticAnalyzerState ()
+limparEscopoFuncao = do
+  (scope, table, warnings) <- get
+  let table' = Map.filter isRight table
+  put (scope, table', warnings)
+  where
+    isRight :: Either a b -> Bool
+    isRight (Right _) = True
+    isRight (Left _) = False
+
+setScope :: Id -> SemanticAnalyzerState ()
+setScope id = do
+  (scope, table, warnings) <- get
+  put (id, table, warnings)
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just (Right (varsArgumento, tipoRetorno)) -> 
+      insertVarsIntoTable varsArgumento
+    Just (Left _) -> error $ id ++ " não é uma função"
+    Nothing -> error $ "A função " ++ id ++ " não foi encontrada"
+
+setScopeMain :: SemanticAnalyzerState ()
+setScopeMain = do
+  (_, table, warnings) <- get
+  put ("main", table, warnings)
+
+insertVarIntoTable :: Var -> SemanticAnalyzerState ()
+insertVarIntoTable (id :#: tipo) = do
+  (scope, table, warnings) <- get
+  let table' = Map.insert id (Left tipo) table
+  put (scope, table', warnings)
+
+insertVarsIntoTable :: [Var] -> SemanticAnalyzerState ()
+insertVarsIntoTable [] = return ()
+insertVarsIntoTable (v : vs) = do
+  insertVarIntoTable v
+  insertVarsIntoTable vs
+
+insertFunctionDeclarationIntoTable :: Funcao -> SemanticAnalyzerState ()
+insertFunctionDeclarationIntoTable (id :->: (varsArgumento, tipoRetorno)) = do
+  (scope, table, warnings) <- get
+  let table' = Map.insert id (Right (varsArgumento, tipoRetorno)) table
+  put (scope, table', warnings)
+
+verifyIfVarExists :: Id -> SemanticAnalyzerState ()
+verifyIfVarExists id = do
+  (scope, table, warnings) <- get
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just (Left varType) -> return ()
+    Just (Right f) -> error $ "Erro: '" ++ id ++ "' não pode ser usada para identificar variável porque já existe uma função com este nome"
+    Nothing -> error $ "Erro: A variável '" ++ id ++ "' não foi declarada no escopo de '" ++ scope ++ "'"
+
+verifyIfFunctionExists :: Id -> SemanticAnalyzerState ()
+verifyIfFunctionExists id = do
+  (scope, table, warnings) <- get
+  let elemFound = Map.lookup id table
+  case elemFound of
+    Just (Right f) -> return ()
+    Just (Left varType) -> error $ "Erro: '" ++ id ++ "' é uma variável e não uma função"
+    Nothing -> error $ "Erro: A função '" ++ id ++ "' não foi encontrada"
+
+
 
 -- Tipos de dados que devem ser verificados:
 -- Expr (apenas binárias);
